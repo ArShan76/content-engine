@@ -490,13 +490,56 @@ def _fmt_srt_time(s: float) -> str:
     return f"{h:02d}:{m:02d}:{sec:02d},{ms:03d}"
 
 
+_CUE_MAX_CHARS = 84   # about two lines of burned-in text
+_CUE_MAX_SECONDS = 7.0
+
+
+def _split_cue_text(text: str, max_chars: int = _CUE_MAX_CHARS) -> List[str]:
+    """Split a long transcript segment into readable chunks on word boundaries,
+    closing a chunk early after punctuation once it is reasonably full."""
+    words = text.split()
+    chunks: List[str] = []
+    cur: List[str] = []
+    for w in words:
+        if cur and len(" ".join(cur + [w])) > max_chars:
+            chunks.append(" ".join(cur))
+            cur = []
+        cur.append(w)
+        if len(" ".join(cur)) >= max_chars * 0.6 and w[-1:] in ".,;:!?":
+            chunks.append(" ".join(cur))
+            cur = []
+    if cur:
+        chunks.append(" ".join(cur))
+    return chunks
+
+
+def _segment_cues(segments: List[Dict[str, Any]]) -> List[tuple]:
+    """Turn transcript segments into (start, end, text) cues. Long segments
+    (Whisper emits 10 s+ ones) are split, each chunk timed in proportion to
+    its length, so the text follows the speech instead of vanishing."""
+    cues: List[tuple] = []
+    for seg in segments:
+        text = (seg.get("text") or "").strip()
+        if not text:
+            continue
+        ss = float(seg["start"])
+        dur = float(seg["duration"])
+        chunks = _split_cue_text(text)
+        total = sum(len(c) for c in chunks) or 1
+        t = ss
+        for c in chunks:
+            d = dur * len(c) / total
+            cues.append((t, t + d, c))
+            t += d
+    return cues
+
+
 def _make_srt(segments: List[Dict[str, Any]], start: float, end: float, path: str) -> int:
     in_range = []
-    for seg in segments:
-        ss, ee = seg["start"], seg["start"] + seg["duration"]
+    for ss, ee, text in _segment_cues(segments):
         if ee <= start + 0.01 or ss >= end - 0.01:
             continue
-        in_range.append((max(ss, start), min(ee, end), seg["text"]))
+        in_range.append((max(ss, start), min(ee, end), text))
     idx = 1
     lines: List[str] = []
     for i, (rs, re, text) in enumerate(in_range):
@@ -508,8 +551,8 @@ def _make_srt(segments: List[Dict[str, Any]], start: float, end: float, path: st
         rel_e = re - start
         if rel_e - rel_s < 0.3:
             continue
-        if rel_e - rel_s > 4.0:
-            rel_e = rel_s + 4.0
+        if rel_e - rel_s > _CUE_MAX_SECONDS:
+            rel_e = rel_s + _CUE_MAX_SECONDS
         lines += [str(idx), f"{_fmt_srt_time(rel_s)} --> {_fmt_srt_time(rel_e)}", text.strip(), ""]
         idx += 1
     with open(path, "w", encoding="utf-8") as f:
