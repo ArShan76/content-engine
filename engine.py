@@ -549,10 +549,13 @@ def cut_clips(
         sub_arg = _escape_filter_path(os.path.basename(srt))
         if subs and segments and os.path.exists(srt) and os.path.getsize(srt) > 0:
             if orient == "v":
+                # Crop and scale first, then burn: burning before the 9:16 crop
+                # sized the subtitles for the 16:9 frame and cut them at both edges.
                 vf = (
-                    f"subtitles={sub_arg}:force_style='FontSize=20,"
-                    "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1',"
-                    "crop=ih*9/16:ih,scale=1080:1920"
+                    "crop=ih*9/16:ih,scale=1080:1920,"
+                    f"subtitles={sub_arg}:force_style='FontSize=11,"
+                    "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=1.5,Shadow=0,"
+                    "MarginL=12,MarginR=12,MarginV=50'"
                 )
             else:
                 vf = (
